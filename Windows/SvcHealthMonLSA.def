@@ -1,0 +1,12 @@
+; SvcHealthMonLSA.def
+; Module definition file for MSVC builds.
+; Tells the linker exactly which functions to export and under what names.
+; MinGW users: you don't need this file — __declspec(dllexport) in the .c
+; source handles exports automatically. Only needed for cl.exe builds.
+
+LIBRARY SvcHealthMonLSA
+
+EXPORTS
+    InitializeChangeNotify
+    PasswordFilter
+    PasswordChangeNotify
