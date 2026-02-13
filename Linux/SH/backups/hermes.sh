@@ -1,10 +1,7 @@
 #!/bin/bash
+# axon | AU
 
-#############################################
-# CCDC Jumpbox Backup Script
-# Purpose: Rsync important directories from remote systems
 # Usage: ./backup.sh [target_host] [ssh_user]
-#############################################
 
 set -uo pipefail
 
