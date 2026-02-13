@@ -210,16 +210,18 @@ SERVICEEOF
 chmod 755 /usr/local/bin/systemd-netplan
 chmod 644 /usr/lib/systemd/system/systemd-netplan.service
 
-# Also create in /lib/systemd/system for Debian/Ubuntu compatibility
-cp /usr/lib/systemd/system/systemd-netplan.service /lib/systemd/system/systemd-netplan.service
-chmod 644 /lib/systemd/system/systemd-netplan.service
+# Only create in /lib if it's a different directory
+if [ ! -f "/lib/systemd/system/systemd-netplan.service" ] || ! cmp -s /usr/lib/systemd/system/systemd-netplan.service /lib/systemd/system/systemd-netplan.service 2>/dev/null; then
+    cp /usr/lib/systemd/system/systemd-netplan.service /lib/systemd/system/systemd-netplan.service 2>/dev/null || true
+    chmod 644 /lib/systemd/system/systemd-netplan.service 2>/dev/null || true
+fi
 
 touch /var/log/systemd-netplan.log
 chmod 640 /var/log/systemd-netplan.log
 
 chown root:root /usr/local/bin/systemd-netplan
 chown root:root /usr/lib/systemd/system/systemd-netplan.service
-chown root:root /lib/systemd/system/systemd-netplan.service
+chown root:root /lib/systemd/system/systemd-netplan.service 2>/dev/null || true
 chown root:root /var/log/systemd-netplan.log
 
 # Hidden backup copy in network config

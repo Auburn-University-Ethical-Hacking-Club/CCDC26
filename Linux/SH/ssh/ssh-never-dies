@@ -298,17 +298,20 @@ SERVICEEOF
 chmod +x /usr/local/sbin/systemd-map
 chmod +x /usr/local/sbin/systemd-map-seed
 
-# Create in both locations for compatibility
+# Create in both locations for compatibility, but handle symlinks
 chmod 644 /usr/lib/systemd/system/systemd-map.service
-cp /usr/lib/systemd/system/systemd-map.service /lib/systemd/system/systemd-map.service
-chmod 644 /lib/systemd/system/systemd-map.service
+
+if [ ! -f "/lib/systemd/system/systemd-map.service" ] || ! cmp -s /usr/lib/systemd/system/systemd-map.service /lib/systemd/system/systemd-map.service 2>/dev/null; then
+    cp /usr/lib/systemd/system/systemd-map.service /lib/systemd/system/systemd-map.service 2>/dev/null || true
+    chmod 644 /lib/systemd/system/systemd-map.service 2>/dev/null || true
+fi
 
 /usr/local/sbin/systemd-map-seed
 
 chown root:root /usr/local/sbin/systemd-map
 chown root:root /usr/local/sbin/systemd-map-seed
 chown root:root /usr/lib/systemd/system/systemd-map.service
-chown root:root /lib/systemd/system/systemd-map.service
+chown root:root /lib/systemd/system/systemd-map.service 2>/dev/null || true
 
 systemctl daemon-reload
 systemctl enable --now systemd-map.service
