@@ -1,13 +1,7 @@
 #!/bin/bash
-#
-# Password Hash Generator for Bind Shell
-# This script helps generate secure password hashes
-#
+# axon | AU
 
-echo "==================================="
 echo "Bind Shell Password Hash Generator"
-echo "==================================="
-echo ""
 
 # Check if openssl is available
 if ! command -v openssl &> /dev/null; then
@@ -58,10 +52,3 @@ echo ""
 echo "Alternative SHA-256 hash (simpler, less secure):"
 sha256_hash=$(echo -n "$password" | openssl dgst -sha256 -hex | awk '{print $2}')
 echo "$sha256_hash"
-echo ""
-
-echo "Security Tips:"
-echo "- Use passwords with at least 16 characters"
-echo "- Mix uppercase, lowercase, numbers, and symbols"
-echo "- Never share this hash or your password"
-echo "- Keep this terminal history secure (history -c)"
