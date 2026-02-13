@@ -1,0 +1,10 @@
+#!/bin/env bash
+# Start listener in background
+#
+echo "ensure you set up a listener first on agreed upon port"
+# Now do the knocking
+echo "Sending knock sequence..."
+for port in 1080 1081 1082; do
+    nc -z 192.168.56.10 $port
+    sleep 0.5
+done

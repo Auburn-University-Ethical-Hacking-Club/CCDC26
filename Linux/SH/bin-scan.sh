@@ -179,7 +179,7 @@ compare_baseline(){
 COMMAND="scan"
 USER_PATHS="/bin,/sbin,/usr/bin,/usr/sbin,/usr/local/bin,/usr/local/sbin,/opt,/snap/bin"
 STATE_DIR=""
-
+CHANGES_ONLY=0
 while [[ $# -gt 0 ]]; do
 	case "$1" in
 		--init) COMMAND="init"; shift ;;
@@ -189,6 +189,7 @@ while [[ $# -gt 0 ]]; do
 		--state) STATE_DIR="$2"; shift 2 ;;
 		--paths) USER_PATHS="$2"; shift 2 ;;
 		--webhook) WEBHOOK="$2"; shift 2 ;;
+		--changes-only) CHANGES_ONLY=1; shift ;; #will not show "UNCHANGED" Binaries
 		-h|--help) usage ;;
 		*) printf "unknown arg: %s\n" "$1" >&2; usage ;;
 	esac
@@ -238,11 +239,11 @@ case "$COMMAND" in
 		unchanged_count=$(grep -c '^UNCHANGED|' "$RESULTS" || true)
 		printf "STATUS SUMMARY: Added=%s Removed=%s Changed=%s Unchanged=%s\n" "$added_count" "$removed_count" "$changed_count" "$unchanged_count"
 
-		awk -F'|' '
+		awk -F'|' -v changes_only="$CHANGES_ONLY" ' 
 			BEGIN { print "STATUS | PATH | HASH/DELTA | SIZE | MTIME" }
 			$1=="ADDED"     { printf "ADDED    | %s | %s | %s | %s\n", $2,$3,$4,$5; next }
 			$1=="REMOVED"   { printf "REMOVED  | %s | %s | %s | %s\n", $2,$3,$4,$5; next }
-			$1=="UNCHANGED" { printf "UNCHANGED| %s\n", $2; next }
+			$1=="UNCHANGED" { if (!changes_only) printf "UNCHANGED| %s\n", $2; next }
 			$1=="CHANGED" {
 				printf "CHANGED  | %s\n\t  baseline: %s | size:%s mtime:%s\n\t  current : %s | size:%s mtime:%s\n",
 				       $2,$3,$4,$5,$6,$7,$8; next
