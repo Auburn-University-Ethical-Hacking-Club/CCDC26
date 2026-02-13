@@ -33,8 +33,7 @@ BACKUP_DIRS=(
 
 # Rsync options
 RSYNC_OPTS=(
-    "-avzh"                    # archive, verbose, compress, human-readable
-    "--progress"               # show progress
+    "-azh"                     # archive, compress, human-readable
     "--partial"                # keep partial transfers
     "--delete"                 # delete files that don't exist on source
     "--backup"                 # backup files that would be deleted/overwritten
@@ -176,11 +175,11 @@ backup_directory() {
     local local_dir="${local_base}${remote_dir}"
     mkdir -p "$local_dir"
     
-    # Perform rsync - note: no trailing slash on source to copy directory itself
+    # Perform rsync - redirect output to log file
     rsync "${RSYNC_OPTS[@]}" \
         -e "ssh ${SSH_OPTS}" \
         "${user}@${target}:${remote_dir}/" \
-        "${local_dir}/"
+        "${local_dir}/" >> "${LOG_FILE}" 2>&1
     
     local exit_code=$?
     
