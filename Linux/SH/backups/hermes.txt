@@ -1,0 +1,4 @@
+# Add to /etc/sudoers.d/rsync on remote systems
+username ALL=(ALL) NOPASSWD: /usr/bin/rsync
+
+# Ensure rsync on both boxes
