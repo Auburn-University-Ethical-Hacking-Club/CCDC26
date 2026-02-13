@@ -1,0 +1,1 @@
+socat FILE:`tty`,raw,echo=0,escape=0x1d TCP:your-server-ip:33306,nodelay
