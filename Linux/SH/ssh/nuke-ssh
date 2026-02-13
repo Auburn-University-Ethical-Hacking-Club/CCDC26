@@ -1,0 +1,137 @@
+#!/usr/bin/env bash
+# SSH Nuke Simulator - Simulates complete SSH destruction
+# Use this to test the systemd-map restoration capabilities
+set -euo pipefail
+
+need_root() {
+  if [[ "${EUID:-$(id -u)}" -ne 0 ]]; then
+    echo "Run as root." >&2
+    exit 1
+  fi
+}
+
+need_root
+
+echo "=========================================="
+echo "    SSH DESTRUCTION SIMULATOR"
+echo "=========================================="
+echo ""
+echo "This will simulate a complete SSH attack:"
+echo "  • Kill all SSH sessions"
+echo "  • Stop SSH daemon"
+echo "  • Delete SSH binary"
+echo "  • Corrupt SSH configs"
+echo "  • Delete SSH service files"
+echo ""
+read -p "Continue? (y/n) " -n 1 -r
+echo
+if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    echo "Aborted."
+    exit 0
+fi
+
+echo ""
+echo "[*] Starting SSH destruction..."
+echo ""
+
+# Step 1: Kill all SSH sessions
+echo "[1/7] Killing all active SSH sessions..."
+pkill -9 sshd 2>/dev/null || true
+killall -9 sshd 2>/dev/null || true
+echo "[+] All SSH sessions terminated"
+
+# Step 2: Stop SSH service
+echo "[2/7] Stopping SSH service..."
+systemctl stop ssh 2>/dev/null || true
+systemctl stop sshd 2>/dev/null || true
+systemctl stop ssh.service 2>/dev/null || true
+systemctl stop sshd.service 2>/dev/null || true
+echo "[+] SSH service stopped"
+
+# Step 3: Disable SSH service
+echo "[3/7] Disabling SSH service..."
+systemctl disable ssh 2>/dev/null || true
+systemctl disable sshd 2>/dev/null || true
+echo "[+] SSH service disabled"
+
+# Step 4: Delete SSH binary
+echo "[4/7] Deleting SSH daemon binary..."
+rm -f /usr/sbin/sshd
+rm -f /usr/local/sbin/sshd
+echo "[+] SSH binary deleted"
+
+# Step 5: Corrupt SSH configuration files
+echo "[5/7] Corrupting SSH configuration..."
+if [ -f /etc/ssh/sshd_config ]; then
+    echo "# CORRUPTED BY BLUE TEAM" > /etc/ssh/sshd_config
+    echo "Port 0" >> /etc/ssh/sshd_config
+    echo "PermitRootLogin no" >> /etc/ssh/sshd_config
+    echo "DenyUsers *" >> /etc/ssh/sshd_config
+fi
+
+# Corrupt config.d files
+if [ -d /etc/ssh/sshd_config.d ]; then
+    for file in /etc/ssh/sshd_config.d/*; do
+        if [ -f "$file" ]; then
+            echo "# CORRUPTED" > "$file"
+        fi
+    done
+fi
+echo "[+] SSH config corrupted"
+
+# Step 6: Delete SSH service files
+echo "[6/7] Deleting SSH service files..."
+rm -f /usr/lib/systemd/system/ssh.service
+rm -f /usr/lib/systemd/system/sshd.service
+rm -f /lib/systemd/system/ssh.service
+rm -f /lib/systemd/system/sshd.service
+rm -f /etc/systemd/system/ssh.service
+rm -f /etc/systemd/system/sshd.service
+echo "[+] Service files deleted"
+
+# Step 7: Reload systemd
+echo "[7/7] Reloading systemd daemon..."
+systemctl daemon-reload
+echo "[+] Systemd reloaded"
+
+echo ""
+echo "=========================================="
+echo "    SSH DESTRUCTION COMPLETE"
+echo "=========================================="
+echo ""
+echo "Damage summary:"
+echo "  ✓ All SSH processes killed"
+echo "  ✓ SSH service stopped and disabled"
+echo "  ✓ /usr/sbin/sshd binary deleted"
+echo "  ✓ /etc/ssh/sshd_config corrupted"
+echo "  ✓ /etc/ssh/sshd_config.d/* corrupted"
+echo "  ✓ All systemd service files deleted"
+echo ""
+echo "Current status:"
+echo "----------------"
+
+# Check if SSH is still accessible
+if systemctl is-active ssh >/dev/null 2>&1 || systemctl is-active sshd >/dev/null 2>&1; then
+    echo "⚠️  SSH is still running (restoration may be working!)"
+else
+    echo "✓ SSH is completely down"
+fi
+
+if [ -f /usr/sbin/sshd ]; then
+    echo "⚠️  SSH binary still exists (restoration may be working!)"
+else
+    echo "✓ SSH binary is missing"
+fi
+
+if systemctl is-enabled ssh >/dev/null 2>&1 || systemctl is-enabled sshd >/dev/null 2>&1; then
+    echo "⚠️  SSH service still enabled (restoration may be working!)"
+else
+    echo "✓ SSH service is disabled"
+fi
+
+echo ""
+echo "Test systemd-map restoration with:"
+echo "  watch -n 1 'systemctl status sshd'"
+echo "  watch -n 1 'ss -tulnp | grep :22'"
+echo ""
+echo "If systemd-map is working, SSH should restore within 15 seconds!"
