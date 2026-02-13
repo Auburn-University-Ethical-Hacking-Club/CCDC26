@@ -3,7 +3,7 @@
 #############################################
 # CCDC Jumpbox Backup Script
 # Purpose: Rsync important directories from remote systems
-# Usage: ./jumpbox_backup.sh [target_host] [ssh_user]
+# Usage: ./backup.sh [target_host] [ssh_user]
 #############################################
 
 set -uo pipefail
